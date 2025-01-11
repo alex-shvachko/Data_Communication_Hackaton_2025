@@ -5,6 +5,14 @@ import time
 import sys
 import select
 from datetime import datetime
+import logging
+import queue
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # ANSI color codes for enhanced output readability
 class Colors:
@@ -37,34 +45,71 @@ def colored_print(message, color=Colors.ENDC):
     with print_lock:
         print(f"{color}{message}{Colors.ENDC}")
 
-def listen_for_offers(stop_event, offer_queue):
-    """
-    Listens for UDP offer messages from servers and adds them to the offer_queue.
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as offer_socket:
-        offer_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        offer_socket.bind(('', OFFER_LISTEN_PORT))
-        offer_socket.settimeout(1.0)  # Timeout to allow periodic stop_event checking
-        colored_print(f"Client started, listening for offer requests on UDP port {OFFER_LISTEN_PORT}...", Colors.OKBLUE)
-        while not stop_event.is_set():
+class Client:
+    def __init__(self):
+        self.UDP_PORT = 13117
+        # ... other initialization code ...
+
+    def start(self):
+        # Create the thread correctly
+        listener_thread = threading.Thread(target=self.listen_for_offers)
+        listener_thread.start()
+
+    def listen_for_offers(self):
+        print(f"Client started, listening for offer requests on UDP port {self.UDP_PORT}...")
+        print(f"[DEBUG] Client listening on UDP port {self.UDP_PORT}")
+        
+        while True:
             try:
-                data, addr = offer_socket.recvfrom(BUFFER_SIZE)
-                # Validate offer message
-                if len(data) != 9:
-                    continue  # Invalid offer length
-                magic_cookie, message_type, server_udp_port, server_tcp_port = struct.unpack('!IBHH', data)
-                if magic_cookie != MAGIC_COOKIE or message_type != OFFER_MESSAGE_TYPE:
-                    continue  # Invalid offer format
-                server_ip = addr[0]
-                server_info = (server_ip, server_udp_port, server_tcp_port)
-                with print_lock:
-                    colored_print(f"Received offer from {server_ip}:{server_tcp_port}", Colors.OKGREEN)
-                offer_queue.append(server_info)
-            except socket.timeout:
-                continue
+                data, addr = self.udp_socket.recvfrom(1024)
+                print(f"[DEBUG] Received data from {addr}: {data.hex()}")
+                
+                # Parse message
+                if len(data) < 7:
+                    print("[ERROR] Message too short")
+                    continue
+                    
+                magic_cookie = data[:4].hex()
+                message_type = data[4]
+                server_port = int.from_bytes(data[5:7], 'big')
+                
+                print(f"[DEBUG] Parsed message:")
+                print(f"[DEBUG] - Magic cookie: {magic_cookie}")
+                print(f"[DEBUG] - Message type: {hex(message_type)}")
+                print(f"[DEBUG] - Server port: {server_port}")
+                
+                if magic_cookie != 'abcddcba':
+                    print("[ERROR] Invalid magic cookie")
+                    continue
+                    
+                if message_type != 0x02:
+                    print("[ERROR] Invalid message type")
+                    continue
+                    
+                print(f"[DEBUG] Attempting TCP connection to {addr[0]}:{server_port}")
+                
+                try:
+                    # Create TCP socket
+                    tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    print(f"[DEBUG] TCP socket created")
+                    
+                    # Set timeout for connection
+                    tcp_socket.settimeout(5)
+                    print(f"[DEBUG] Attempting connection to {addr[0]}:{server_port}")
+                    
+                    # Connect
+                    tcp_socket.connect((addr[0], server_port))
+                    print(f"[DEBUG] TCP connection successful!")
+                    
+                    # Start your speed test here
+                    return tcp_socket, addr[0], server_port
+                    
+                except Exception as e:
+                    print(f"[ERROR] TCP connection failed: {str(e)}")
+                    tcp_socket.close()
+                    
             except Exception as e:
-                with print_lock:
-                    colored_print(f"Error receiving offer: {e}", Colors.FAIL)
+                print(f"[ERROR] Error processing offer: {str(e)}")
 
 def get_user_parameters():
     """
@@ -201,36 +246,47 @@ def start_speed_test(server_info, file_size, num_tcp, num_udp):
         colored_print(f"Average UDP transfer speed: {avg_udp_speed:.2f} bits/second", Colors.OKCYAN)
         colored_print(f"Total UDP packet loss: {packet_loss:.2f}%", Colors.OKCYAN)
 
+# Define the function at module level (outside any class or other function)
+def listen_for_offers(stop_event, offer_queue, file_size, transfer_id):
+    print(f"[DEBUG] Client listening for offers...")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_sock:
+        udp_sock.bind(('', 13117))  # Bind to the offer port
+        while not stop_event.is_set():
+            try:
+                offer_message, server_address = udp_sock.recvfrom(1024)  # Buffer size of 1024 bytes
+                # Unpack the offer message
+                magic_cookie, message_type, server_udp_port, server_tcp_port = struct.unpack('!IBHH', offer_message)
+                if magic_cookie == MAGIC_COOKIE and message_type == OFFER_MESSAGE_TYPE:
+                    print(f"[DEBUG] Received offer from {server_address}: UDP Port {server_udp_port}, TCP Port {server_tcp_port}")
+                    # Initiate TCP transfer
+                    perform_tcp_transfer(server_address[0], server_tcp_port, file_size, transfer_id)
+            except Exception as e:
+                print(f"[ERROR] {e}")
+
 def main():
-    """
-    Main function to run the client:
-    - Listens for server offers.
-    - Upon receiving an offer, prompts the user for parameters.
-    - Initiates speed tests based on user input.
-    - Continues to listen for new offers after completing transfers.
-    """
+    # Create the events and queue
     stop_event = threading.Event()
-    offer_queue = []
-    offer_listener_thread = threading.Thread(target=listen_for_offers, args=(stop_event, offer_queue), daemon=True)
+    offer_queue = queue.Queue()
+    file_size, num_tcp, num_udp = get_user_parameters()
+    transfer_id = 1
+    
+    # Create and start the thread
+    offer_listener_thread = threading.Thread(
+        target=listen_for_offers,  # Now this will be found
+        args=(stop_event, offer_queue, file_size, transfer_id),
+        daemon=True
+    )
     offer_listener_thread.start()
+    
     try:
+        # Keep main thread alive
         while True:
-            if offer_queue:
-                server_info = offer_queue.pop(0)
-                # Prompt user for parameters
-                file_size, num_tcp, num_udp = get_user_parameters()
-                # Start speed test
-                start_speed_test(server_info, file_size, num_tcp, num_udp)
-                colored_print("All transfers complete, listening for offer requests...", Colors.OKBLUE)
-            else:
-                time.sleep(1)  # Wait for offers
+            if not offer_queue.empty():
+                # Handle offer
+                pass
+            threading.Event().wait(0.1)
     except KeyboardInterrupt:
-        colored_print("\nClient shutting down...", Colors.WARNING)
-        stop_event.set()
-        offer_listener_thread.join()
-        colored_print("Client successfully shut down.", Colors.OKGREEN)
-    except Exception as e:
-        colored_print(f"Client encountered an error: {e}", Colors.FAIL)
+        print("Shutting down...")
         stop_event.set()
 
 if __name__ == "__main__":

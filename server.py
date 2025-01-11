@@ -13,6 +13,10 @@ PAYLOAD_MESSAGE_TYPE = 0x4
 # Lock for printing to avoid jumbled prints from multiple threads
 print_lock = threading.Lock()
 
+# Instead, use fixed ports:
+UDP_PORT = 13117  # Same as client's listening port
+TCP_PORT = 12000  # Fixed TCP port
+
 def get_server_ip():
     """
     Retrieves the server's IP address by connecting to an external host.
