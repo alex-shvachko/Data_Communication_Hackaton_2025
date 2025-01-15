@@ -21,7 +21,7 @@ def get_server_ip():
     """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(('8.8.8.8', 80))
+            s.connect(('8.8.8.8', 80)) # understand what local adress machine gets
             return s.getsockname()[0]
     except Exception:
         return '127.0.0.1'
@@ -101,7 +101,7 @@ def handle_udp_request(request_data, client_address, server_udp_socket):
     processes udp request sent by a client
     """
     try:
-        if len(request_data) != 13:
+        if len(request_data) != 13: # must be len of 13
             return
         magic_cookie, message_type, file_size = struct.unpack('!IBQ', request_data)
         if magic_cookie != MAGIC_COOKIE or message_type != REQUEST_MESSAGE_TYPE:
@@ -122,11 +122,11 @@ def udp_server(server_udp_port, stop_event):
     """
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_sock:
         udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        udp_sock.bind(('', server_udp_port))
-        udp_sock.settimeout(1.0)  
+        udp_sock.bind(('', server_udp_port)) # set port for udp
+        udp_sock.settimeout(1.0)  # set timeout
         while not stop_event.is_set():
             try:
-                data, addr = udp_sock.recvfrom(1024)  
+                data, addr = udp_sock.recvfrom(1024) # timeouted in 1 second  
                 request_thread = threading.Thread(target=handle_udp_request, args=(data, addr, udp_sock), daemon=True)
                 request_thread.start()
             except socket.timeout:
