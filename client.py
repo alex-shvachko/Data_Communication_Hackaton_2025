@@ -176,7 +176,7 @@ def perform_udp_transfer(server_ip, server_udp_port, file_size, transfer_id, sta
 
 def start_speed_test(server_info, file_size, num_tcp, num_udp):
     """
-    initiates the speed test. Waits how much time all waited
+    initiates the speed test. execute all at the same time and waits until all are done
     """
     server_ip, server_udp_port, server_tcp_port = server_info
     # colored_print(f"Connecting to server {server_ip}:{server_tcp_port}", Colors.OKGREEN)
@@ -245,13 +245,13 @@ def listen_for_offers(stop_event, offer_queue, file_size, transfer_id):
                 # server_udp_port, server_tcp_port
                 magic_cookie, message_type, server_udp_port, server_tcp_port = struct.unpack('!IBHH', offer_message)
 
-                if magic_cookie == MAGIC_COOKIE and message_type == OFFER_MESSAGE_TYPE:
+                if magic_cookie == MAGIC_COOKIE and message_type == OFFER_MESSAGE_TYPE: # checks valid
                     server_info = (server_address[0], server_udp_port, server_tcp_port)
 
                     # if we dont have server or this server is our current
-                    if current_server is None or current_server == server_info:
+                    if current_server is None or current_server == server_info: # checks if new server or not
                         if current_server is None:
-                            # colored_print(f"Connected to server {server_address[0]}:{server_tcp_port}", Colors.OKBLUE)
+                            # colored_print(f"Connected to server {server_address[0]}:{server_tcp_port}", Colors.OKBLUE) # so it's the first server we are connecting to
                             current_server = server_info
                         offer_queue.put(server_info)
             except socket.timeout:
@@ -265,9 +265,9 @@ def listen_for_offers(stop_event, offer_queue, file_size, transfer_id):
 def main():
     """
     main function for client:
-    - 1. gets user parameters
-    - 2. starts listening for offers
-    - 3. handles offers and makes sure to initiates speed tests
+    1. gets user parameters
+    2. starts listening for offers
+    3. handles offers and makes sure to initiates speed tests
     """
     stop_event = threading.Event()
     offer_queue = queue.Queue()
@@ -290,7 +290,7 @@ def main():
                 # get server info - with timeout to prevent busy waiting
                 server_info = offer_queue.get(timeout=1.0)
 
-                # clear the queue of pending offers
+                # clear the queue of pending offers before we statr
                 while not offer_queue.empty():
                     try:
                         offer_queue.get_nowait()
